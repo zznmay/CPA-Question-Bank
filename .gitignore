@@ -1,0 +1,103 @@
+# ─────────────────────────────────────────────────────────────
+# CPA 统一题库 · Git 忽略规则
+# 原则：只入库「源码 + 文档 + 校验脚本」；教材原件、派生资料、
+#      本机数据与任何密钥文件一律不入库。
+# ─────────────────────────────────────────────────────────────
+
+# ── 操作系统残留 ─────────────────────────────────────────────
+.DS_Store
+.DS_Store?
+._*
+.AppleDouble
+.LSOverride
+.Spotlight-V100
+.Trashes
+Icon
+Icon\r
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# ── 编辑器 / IDE ───────────────────────────────────────────
+.vscode/
+.idea/
+*.code-workspace
+*.swp
+*.swo
+*~
+*.sublime-project
+*.sublime-workspace
+
+# ── 依赖与构建产物（本项目无构建步骤，保留以防将来引入工具链）──
+node_modules/
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+dist/
+build/
+.cache/
+coverage/
+*.tgz
+
+# ── Python 工具残留（OCR / 校验脚本）────────────────────────
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# ── 教材原件与派生资料（版权内容，禁止入库）─────────────────
+# 轻一 / 轻二 / 教材扫描件及其切分、OCR、裁剪中间产物
+*.pdf
+*.epub
+*.mobi
+*.djvu
+轻一*/
+轻二*/
+轻三*/
+轻四*/
+教材*/
+原始资料*/
+ocr/
+ocr-*/
+*-ocr*/
+*-crop*/
+*.ocr.txt
+*.ocr.json
+
+# ── 本机学习数据导出（localStorage 备份 / 自建题导出）──────
+# 这些文件含个人答题记录，不要提交，也不要公开分享。
+*.export.json
+data-backup-*.json
+CPA统一题库-数据备份-*.json
+自建题*.json
+exports/
+backups/
+
+# ── 日志与临时文件 ─────────────────────────────────────────
+*.log
+*.tmp
+*.temp
+*.bak
+*.orig
+*.rej
+npm-debug.log*
+yarn-error.log*
+
+# ── 密钥与本地配置（防御性规则，仓库当前不含任何凭据）──────
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+id_rsa*
+id_ed25519*
+.netrc
+.npmrc
+secrets.json
+credentials.json
+service-account*.json
