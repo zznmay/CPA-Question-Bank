@@ -7,6 +7,7 @@
 
   const STORAGE_KEY = "cpa-unified-bank-v1";
   const TEST_KEEP_DONE = 40;
+  const SYNC_DEBOUNCE_MS = 1200;
 
   let storageAvailable = true;
   try {
@@ -62,6 +63,7 @@
     if (!storageAvailable) return false;
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+      if (typeof cloudSchedulePush === "function") cloudSchedulePush();
       return true;
     } catch (e) {
       console.error("[CPA] 本地数据保存失败：", e);
@@ -345,6 +347,168 @@
     }
   }
 
+  /* ================= 云端同步层 =================
+     策略：本地 localStorage 始终即时写入（离线可用、刷新不丢）；
+     登录后防抖推送到云端（cpa_user_data，每用户一行整包 JSON）；
+     启动时拉取云端数据按时间戳合并，避免重复写入与覆盖。 */
+
+  let cloudSignedIn = false;
+  let cloudPushTimer = null;
+  let cloudPushBusy = false;
+  let cloudDirty = false;
+  let cloudStatus = "local"; // local | signed-in | syncing | synced | offline | auth
+  let cloudStatusListeners = [];
+
+  function setCloudStatus(next) {
+    if (cloudStatus === next) return;
+    cloudStatus = next;
+    cloudStatusListeners.forEach(function (cb) {
+      try {
+        cb(cloudStatus);
+      } catch (e) {
+        /* 忽略监听器异常 */
+      }
+    });
+  }
+
+  function onCloudStatus(cb) {
+    if (typeof cb === "function") cloudStatusListeners.push(cb);
+    return function () {
+      cloudStatusListeners = cloudStatusListeners.filter(function (x) {
+        return x !== cb;
+      });
+    };
+  }
+
+  function getCloudStatus() {
+    return cloudStatus;
+  }
+
+  function toastSafe(msg, kind, ms) {
+    if (U && U.toast) U.toast(msg, kind || "info", ms || 3200);
+  }
+
+  async function cloudPullAndMerge() {
+    const C = CPA.cloud;
+    if (!C || !C.isAvailable()) return;
+    const session = await C.getSession();
+    if (!session) {
+      cloudSignedIn = false;
+      setCloudStatus("local");
+      return;
+    }
+    cloudSignedIn = true;
+    setCloudStatus("syncing");
+    const res = await C.pullRemote();
+    if (res.status === "ok") {
+      if (res.row && res.row.data && typeof res.row.data === "object") {
+        try {
+          const counts = importAll(res.row.data);
+          if (
+            counts &&
+            (counts.answers.added || counts.answers.updated || counts.tests || counts.questions)
+          ) {
+            console.info(
+              "[CPA] 云端数据合并：答题 +" +
+                counts.answers.added +
+                "/更新 " +
+                counts.answers.updated +
+                "，测试 " +
+                counts.tests +
+                "，题目 " +
+                counts.questions
+            );
+          }
+        } catch (e) {
+          console.warn("[CPA] 云端数据合并失败：", e);
+        }
+      }
+      setCloudStatus("synced");
+    } else if (res.status === "auth") {
+      cloudSignedIn = false;
+      setCloudStatus("auth");
+      toastSafe("云端登录状态已失效，请重新登录以恢复同步。", "error", 4000);
+    } else {
+      setCloudStatus("offline");
+      toastSafe("网络异常，当前使用本机数据，恢复网络后将自动同步。", "info", 4000);
+    }
+  }
+
+  function cloudSchedulePush() {
+    if (!cloudSignedIn) return;
+    cloudDirty = true;
+    if (cloudPushTimer) clearTimeout(cloudPushTimer);
+    cloudPushTimer = setTimeout(cloudFlush, SYNC_DEBOUNCE_MS);
+  }
+
+  async function cloudFlush() {
+    if (!cloudSignedIn) return;
+    if (cloudPushBusy) {
+      cloudSchedulePush(); // 正在上传中产生新变更，稍后再推
+      return;
+    }
+    if (!cloudDirty) return;
+    cloudPushBusy = true;
+    cloudDirty = false;
+    setCloudStatus("syncing");
+    const C = CPA.cloud;
+    const payload = {
+      app: "cpa-unified-bank",
+      version: 1,
+      activeSubjectId: state.activeSubjectId,
+      progress: clone(state.progress),
+      tests: clone(state.tests),
+      userQuestions: clone(state.userQuestions),
+      savedAt: Date.now(),
+    };
+    const res = await C.pushRemote(payload);
+    cloudPushBusy = false;
+    if (res.status === "ok") {
+      if (cloudDirty) {
+        cloudSchedulePush(); // 上传期间又有新改动，补推一次
+      } else {
+        setCloudStatus("synced");
+      }
+    } else if (res.status === "auth") {
+      cloudSignedIn = false;
+      setCloudStatus("auth");
+      toastSafe("云端登录状态已失效，数据已保存在本机，请重新登录恢复同步。", "error", 4200);
+    } else {
+      setCloudStatus("offline");
+      toastSafe("云端同步失败，数据已暂存本机，恢复网络后自动重试。", "error", 4000);
+      cloudSchedulePush(); // 退避后自动重试
+    }
+  }
+
+  async function handleSignedIn(user) {
+    cloudSignedIn = true;
+    setCloudStatus("syncing");
+    await cloudPullAndMerge();
+    cloudSchedulePush();
+    if (CPA.app && CPA.app.refreshSyncBadge) CPA.app.refreshSyncBadge();
+  }
+
+  async function handleSignOut() {
+    await CPA.cloud.signOut();
+    cloudSignedIn = false;
+    cloudDirty = false;
+    if (cloudPushTimer) {
+      clearTimeout(cloudPushTimer);
+      cloudPushTimer = null;
+    }
+    setCloudStatus("local");
+    if (CPA.app && CPA.app.refreshSyncBadge) CPA.app.refreshSyncBadge();
+    toastSafe("已退出登录，后续数据仅保存在本机。", "info", 3200);
+  }
+
+  function isCloudSignedIn() {
+    return cloudSignedIn;
+  }
+
+  window.addEventListener("online", function () {
+    if (cloudSignedIn) cloudSchedulePush();
+  });
+
   CPA.store = {
     key: STORAGE_KEY,
     available: storageAvailable,
@@ -372,5 +536,14 @@
     exportAll: exportAll,
     importAll: importAll,
     storageBytes: storageBytes,
+    // 云端同步
+    syncFromCloud: cloudPullAndMerge,
+    schedulePush: cloudSchedulePush,
+    flush: cloudFlush,
+    handleSignedIn: handleSignedIn,
+    handleSignOut: handleSignOut,
+    isCloudSignedIn: isCloudSignedIn,
+    getCloudStatus: getCloudStatus,
+    onCloudStatus: onCloudStatus,
   };
 })();

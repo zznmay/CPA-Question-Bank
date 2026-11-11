@@ -75,7 +75,8 @@
       "      </a>" +
       '      <div class="header-mid" id="headerMid"></div>' +
       '      <div class="header-actions">' +
-      '        <span class="local-dot" title="进度保存在本机浏览器"><i></i>本机数据</span>' +
+      '        <span class="local-dot sync-dot" id="syncDot" title="学习数据云端同步状态"><i></i><em id="syncDotText">本机数据</em></span>' +
+      '        <button class="btn btn-ghost btn-sm" id="authBtn" type="button">登录</button>' +
       '        <button class="btn btn-ghost btn-sm" id="dataBtn" type="button">数据管理</button>' +
       "      </div>" +
       "    </div>" +
@@ -84,14 +85,87 @@
       '  <main id="view" class="view-root" tabindex="-1"></main>' +
       '  <footer class="app-footer">' +
       '    <div class="app-footer-inner">' +
-      "      <span>CPA 统一题库框架 · 专业阶段</span>" +
+      "      <span>CPA 统一题库 · WorkBuddy 应用</span>" +
       "      <span>当前题目为占位内容，可通过「录入题目」或科目数据文件补充</span>" +
-      "      <span>学习数据仅保存在本机浏览器</span>" +
+      "      <span>登录后学习数据云端保存，未登录时保存在本机浏览器</span>" +
       "    </div>" +
       "  </footer>" +
       "</div>";
 
     document.getElementById("dataBtn").addEventListener("click", openDataModal);
+    document.getElementById("authBtn").addEventListener("click", handleAuthBtnClick);
+
+    // 启动：恢复云端会话并拉取合并数据，订阅同步状态
+    if (CPA.store && typeof CPA.store.syncFromCloud === "function") {
+      CPA.store.syncFromCloud().then(function () {
+        refreshAuthUI();
+        refreshSyncBadge();
+      });
+      CPA.store.onCloudStatus(function () {
+        refreshSyncBadge();
+      });
+    }
+    if (CPA.cloud && typeof CPA.cloud.onAuthStateChange === "function") {
+      CPA.cloud.onAuthStateChange(function (event) {
+        if (event === "SIGNED_OUT") {
+          refreshAuthUI();
+          refreshSyncBadge();
+        }
+      });
+    }
+  }
+
+  const SYNC_BADGES = {
+    local: { text: "本机数据", cls: "", tip: "未登录，数据保存在本机浏览器；登录后可云端同步" },
+    "signed-in": { text: "已登录", cls: "", tip: "已登录云端账号" },
+    syncing: { text: "同步中…", cls: "is-syncing", tip: "正在与云端同步学习数据" },
+    synced: { text: "已同步", cls: "is-ok", tip: "学习数据已同步至云端" },
+    offline: { text: "离线暂存", cls: "is-warn", tip: "网络异常或云端不可达，数据已暂存本机，恢复后自动同步" },
+    auth: { text: "需重新登录", cls: "is-warn", tip: "云端登录状态已失效，请重新登录恢复同步" },
+  };
+
+  function refreshSyncBadge() {
+    const dot = document.getElementById("syncDot");
+    const text = document.getElementById("syncDotText");
+    if (!dot || !text) return;
+    const status = CPA.store.getCloudStatus ? CPA.store.getCloudStatus() : "local";
+    const badge = SYNC_BADGES[status] || SYNC_BADGES.local;
+    dot.className = "local-dot sync-dot" + (badge.cls ? " " + badge.cls : "");
+    dot.title = badge.tip;
+    text.textContent = badge.text;
+  }
+
+  async function refreshAuthUI() {
+    const btn = document.getElementById("authBtn");
+    if (!btn) return;
+    if (!CPA.cloud || !CPA.cloud.isAvailable()) {
+      btn.textContent = "登录";
+      btn.disabled = false;
+      btn.title = "云服务组件未加载";
+      return;
+    }
+    const session = await CPA.cloud.getSession();
+    if (session) {
+      const user = await CPA.cloud.fetchUser();
+      const label = CPA.cloud.maskPhone(user && (user.phone || user.email));
+      btn.textContent = label + " · 退出";
+      btn.title = "点击退出登录";
+      btn.dataset.signedIn = "1";
+    } else {
+      btn.textContent = "登录";
+      btn.title = "登录后学习数据云端保存";
+      btn.dataset.signedIn = "";
+    }
+  }
+
+  async function handleAuthBtnClick() {
+    const btn = document.getElementById("authBtn");
+    if (btn && btn.dataset.signedIn === "1") {
+      await CPA.store.handleSignOut();
+      refreshAuthUI();
+      return;
+    }
+    CPA.cloud.openLoginModal();
   }
 
   function viewLabel(view) {
@@ -323,26 +397,45 @@
     const bytes = CPA.store.storageBytes();
     const sizeText = bytes < 1024 ? bytes + " B" : (bytes / 1024).toFixed(1) + " KB";
     const subject = currentRoute && currentRoute.subjectId ? CPA.getSubject(currentRoute.subjectId) : null;
+    const signedIn = CPA.store.isCloudSignedIn ? CPA.store.isCloudSignedIn() : false;
+    const cloudNote = signedIn
+      ? "已登录云题库：进度、测试记录与自建题目自动同步至云端，可多设备访问。"
+      : "数据当前保存在本机浏览器；登录后自动同步至云端，可多设备访问。";
 
     modalEl = document.createElement("div");
     modalEl.className = "modal-backdrop";
     modalEl.innerHTML =
       '<div class="modal" role="dialog" aria-modal="true" aria-labelledby="dataModalTitle">' +
       '  <div class="modal-head">' +
-      '    <div><h2 id="dataModalTitle">数据管理</h2><p>进度、测试记录与自建题目均保存在本机浏览器。</p></div>' +
+      '    <div><h2 id="dataModalTitle">数据管理</h2><p>' +
+      U.esc(cloudNote) +
+      "</p></div>" +
       '    <button class="icon-btn" type="button" data-close aria-label="关闭">×</button>' +
       "  </div>" +
       '  <div class="modal-body">' +
       '    <div class="data-note">' +
-      "      <strong>建议定期备份。</strong> 清除浏览器缓存、切换浏览器或使用隐私模式会导致进度丢失。" +
+      "      <strong>" +
+      (signedIn ? "云端同步已开启。" : "建议登录云题库并定期备份。") +
+      "</strong> " +
+      (signedIn
+        ? "本机缓存与云端数据保持一致；清除浏览器缓存后重新登录即可恢复。"
+        : "清除浏览器缓存、切换浏览器或使用隐私模式会导致本机进度丢失。") +
       "      当前占用 <b>" +
       sizeText +
       "</b>。" +
       "    </div>" +
       '    <div class="data-actions">' +
       '      <div class="data-action-row">' +
+      "        <div><b>同步到云端</b><span>" +
+      (signedIn ? "立即上传当前数据到云端" : "登录后可将本机数据同步到云端") +
+      "</span></div>" +
+      (signedIn
+        ? '<button class="btn btn-primary btn-sm" type="button" id="syncNowBtn">立即同步</button>'
+        : '<button class="btn btn-primary btn-sm" type="button" id="loginFromDataBtn">登录</button>') +
+      "      </div>" +
+      '      <div class="data-action-row">' +
       "        <div><b>导出全部数据</b><span>包含六科进度、测试记录和自建题目</span></div>" +
-      '        <button class="btn btn-primary btn-sm" type="button" id="exportAllBtn">导出 JSON</button>' +
+      '        <button class="btn btn-ghost btn-sm" type="button" id="exportAllBtn">导出 JSON</button>' +
       "      </div>" +
       '      <div class="data-action-row">' +
       "        <div><b>导入数据</b><span>与本机数据合并，较新的记录优先</span></div>" +
@@ -362,7 +455,9 @@
       "      </div>" +
       "    </div>" +
       "  </div>" +
-      '  <div class="modal-foot"><span class="muted small">导出文件可在其他设备导入，实现跨浏览器迁移。</span>' +
+      '  <div class="modal-foot"><span class="muted small">' +
+      (signedIn ? "云端数据随账号保存，导出文件可用于离线备份。" : "导出文件可在其他设备导入；登录云题库可自动同步。") +
+      "</span>" +
       '  <button class="btn btn-ghost btn-sm" type="button" data-close>关闭</button></div>' +
       "</div>";
     document.body.appendChild(modalEl);
@@ -373,6 +468,37 @@
       if (e.target.closest("[data-close]")) closeModal();
     });
     document.addEventListener("keydown", escClose);
+
+    const syncNowBtn = document.getElementById("syncNowBtn");
+    if (syncNowBtn) {
+      syncNowBtn.addEventListener("click", async function () {
+        syncNowBtn.disabled = true;
+        syncNowBtn.textContent = "同步中…";
+        try {
+          await CPA.store.flush();
+          const status = CPA.store.getCloudStatus();
+          if (status === "synced") {
+            U.toast("已同步到云端");
+            closeModal();
+          } else {
+            U.toast("同步未完成（" + (SYNC_BADGES[status] || {}).text + "），请稍后重试。", "error", 3600);
+            syncNowBtn.disabled = false;
+            syncNowBtn.textContent = "立即同步";
+          }
+        } catch (e) {
+          U.toast("同步失败：" + (e.message || "未知错误"), "error", 3600);
+          syncNowBtn.disabled = false;
+          syncNowBtn.textContent = "立即同步";
+        }
+      });
+    }
+    const loginFromDataBtn = document.getElementById("loginFromDataBtn");
+    if (loginFromDataBtn) {
+      loginFromDataBtn.addEventListener("click", function () {
+        closeModal();
+        CPA.cloud.openLoginModal();
+      });
+    }
 
     document.getElementById("exportAllBtn").addEventListener("click", function () {
       U.downloadJson(
