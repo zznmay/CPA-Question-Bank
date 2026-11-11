@@ -449,9 +449,10 @@ img {
   text-align: center;
 }
 
-.modal-sm {
+/* 登录弹窗：提高优先级覆盖后置的 .modal 宽度声明（否则 620px 会在手机上超宽裁切） */
+.modal.modal-sm {
+  width: min(400px, 100%);
   max-width: 400px;
-  width: calc(100vw - 40px);
 }
 
 /* ==========================================================================
@@ -4099,6 +4100,7 @@ img {
   width: 620px;
   max-width: 100%;
   max-height: 88vh;
+  max-height: 88dvh;
   display: flex;
   flex-direction: column;
   background: #fff;
@@ -4873,6 +4875,7 @@ img {
 
   .modal {
     max-height: 92vh;
+    max-height: 92dvh;
     border-radius: 18px;
   }
 
